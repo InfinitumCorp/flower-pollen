@@ -1,0 +1,27 @@
+{
+  "name": "flower-pollen-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fleet operations backend for Flower(TM) stations and POLLEN(TM) swarms",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.ts",
+    "start": "node src/server.ts",
+    "test": "node --test test/",
+    "typecheck": "tsc --noEmit",
+    "notices": "node scripts/notices.mjs"
+  },
+  "dependencies": {
+    "fastify": "^5.12.8",
+    "h3-js": "4.5.0",
+    "protobufjs": "7.5.4",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3"
+  }
+}
