@@ -154,7 +154,7 @@ test/                node:test suites (in-memory SQLite; mTLS tests build a temp
 proto/               POLLEN(TM) wire schemas
 deploy/pki/         cfssl CA and profile configs
 scripts/            notices generator, dev PKI
-.github/workflows/   CI: typecheck, tests (Node 24 + 26), notices drift check, Docker build + health check
+.github/workflows/   CI on a self-hosted runner: typecheck, tests (Node 24 + 26), notices drift check; Docker job (hosted, off until HOSTED_RUNNERS=true)
 ```
 
 ## Open-source dependencies
