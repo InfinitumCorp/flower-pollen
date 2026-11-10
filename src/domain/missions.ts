@@ -65,6 +65,11 @@ export const getMission = (db: DB, id: string) => missionView(db, getMissionRow(
 export const listMissions = (db: DB, status?: string) =>
   all(db, 'SELECT * FROM missions WHERE (?1 IS NULL OR status = ?1) ORDER BY created_at DESC', status ?? null).map((r) => missionView(db, r));
 
+/** Missions a station still has work for: active, recalling, or aborted but not yet closed out. */
+export const listOpenMissionsForStation = (db: DB, stationId: string) =>
+  all(db, `SELECT * FROM missions WHERE station_id = ? AND ended_at IS NULL AND status IN ('active','recalling','aborted')
+           ORDER BY created_at DESC`, stationId).map((r) => missionView(db, r));
+
 export function listCells(db: DB, missionId: string) {
   getMissionRow(db, missionId);
   return all(db, 'SELECT * FROM mission_cells WHERE mission_id = ? ORDER BY cell_id', missionId).map((c) => ({
@@ -239,8 +244,11 @@ export function assignCells(db: DB, missionId: string) {
   const open = all(db, `SELECT cell_id, lon, lat FROM mission_cells WHERE mission_id = ? AND status = 'unassigned'`, missionId);
   if (open.length === 0) return;
   if (fleet.length === 0) {
-    raiseAlert(db, { kind: 'coverage_gap', severity: 'warning', missionId,
-      detail: `${open.length} cells unassigned: no aircraft available in mission` });
+    const alreadyOpen = one(db, `SELECT 1 FROM alerts WHERE kind = 'coverage_gap' AND mission_id = ? AND acknowledged_at IS NULL`, missionId);
+    if (!alreadyOpen) {
+      raiseAlert(db, { kind: 'coverage_gap', severity: 'warning', missionId,
+        detail: `${open.length} cells unassigned: no aircraft available in mission` });
+    }
     return;
   }
   const st = getStationRow(db, r.station_id);
@@ -294,6 +302,7 @@ export function returnAircraft(db: DB, p: Principal, aircraftId: string, reason:
 export function markLost(db: DB, p: Principal, aircraftId: string, reason: string) {
   return tx(db, () => {
     const a = getAircraftRow(db, aircraftId);
+    requireStationScope(p, a.station_id);
     if (!FLIGHT_STATES.includes(a.state)) throw conflict(`aircraft is ${a.state}; only flying aircraft can be marked lost`);
     raiseAlert(db, { kind: 'aircraft_lost', severity: 'critical', aircraftId, missionId: a.mission_id, detail: reason });
     releaseFromMission(db, aircraftId, 'lost', reason, actorOf(p));
@@ -302,6 +311,12 @@ export function markLost(db: DB, p: Principal, aircraftId: string, reason: strin
 
 export function dock(db: DB, p: Principal, aircraftId: string, input: { stationId: string; bay: number; batteryPct: number }) {
   requireStationScope(p, input.stationId);
+  // A Flower docks its own aircraft. Another station's aircraft may only be taken in once it is
+  // declared lost (recovery), so no station can pull a flying aircraft off someone else's mission.
+  const a = getAircraftRow(db, aircraftId);
+  if (p.role === 'station' && a.station_id !== p.stationId && a.state !== 'lost') {
+    throw forbidden('only lost aircraft from another station can be recovered here');
+  }
   return dockAircraft(db, actorOf(p), aircraftId, input, (missionId) => {
     assignCells(db, missionId);
     finalizeIfDone(db, missionId);
@@ -316,6 +331,9 @@ export function markCellCovered(db: DB, p: Principal, missionId: string, cellId:
     const c = one(db, 'SELECT * FROM mission_cells WHERE mission_id = ? AND cell_id = ?', missionId, cellId);
     if (!c) throw notFound('cell');
     if (c.status === 'covered') return getMission(db, missionId);
+    const a = one(db, 'SELECT mission_id FROM aircraft WHERE id = ?', aircraftId);
+    if (!a) throw notFound('aircraft');
+    if (a.mission_id !== missionId) throw conflict('aircraft is not flying this mission');
     run(db, `UPDATE mission_cells SET status = 'covered', aircraft_id = ? WHERE mission_id = ? AND cell_id = ?`, aircraftId, missionId, cellId);
     record(db, actorOf(p), 'mission.cell_covered', { missionId, cellId, aircraftId });
     const left = Number(one(db, `SELECT COUNT(*) AS n FROM mission_cells WHERE mission_id = ? AND status != 'covered'`, missionId)!.n);
