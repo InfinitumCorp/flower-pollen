@@ -1,0 +1,15 @@
+{
+  "signing": {
+    "default": { "expiry": "8760h" },
+    "profiles": {
+      "flower-client": {
+        "expiry": "2160h",
+        "usages": ["signing", "digital signature", "key encipherment", "client auth"]
+      },
+      "server": {
+        "expiry": "8760h",
+        "usages": ["signing", "digital signature", "key encipherment", "server auth"]
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+// POLLEN(TM) telemetry, relayed by a Flower(TM) station to the fleet backend.
+// Infinitum's own schema; the transport pattern (compact protobuf batches from the edge) follows
+// teslamotors/fleet-telemetry (Apache-2.0), but no fields or code are taken from it.
+//
+// POST /v1/telemetry with Content-Type: application/x-protobuf and a TelemetryBatch body.
+// Field numbers are permanent: add new fields, never renumber or reuse.
+syntax = "proto3";
+
+package infinitum.pollen.v1;
+
+message TelemetryPoint {
+  string aircraft_id = 1;   // UUID of the POLLEN aircraft
+  int64  ts_unix_ms = 2;    // sample time on the aircraft; 0 = use receive time
+  double lat = 3;           // WGS84 degrees
+  double lon = 4;           // WGS84 degrees
+  float  alt_m = 5;         // metres above ground
+  float  battery_pct = 6;   // 0-100
+}
+
+message TelemetryBatch {
+  string station_id = 1;    // optional; when set it must match the authenticated station
+  uint64 sequence = 2;      // station-side batch counter, for gap detection on the station
+  repeated TelemetryPoint points = 3;
+}

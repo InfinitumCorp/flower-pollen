@@ -1,0 +1,6 @@
+{
+  "CN": "Infinitum Fleet Device CA",
+  "key": { "algo": "ecdsa", "size": 256 },
+  "names": [{ "O": "Infinitum Corporation", "OU": "Flower-POLLEN Fleet" }],
+  "ca": { "expiry": "43800h" }
+}

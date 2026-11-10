@@ -1,0 +1,44 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  # Runs on the self-hosted Windows runner registered with the `flower-pollen` label
+  # (GitHub-hosted minutes are unavailable on this account for now).
+  test:
+    runs-on: [self-hosted, flower-pollen]
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      matrix:
+        node: [24, 26]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          # No `cache: npm`: on the self-hosted runner the npm cache already lives on disk,
+          # and setup-node's post-job cache upload hangs there.
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Third-party notices are up to date
+        run: npm run notices && git diff --exit-code THIRD_PARTY_NOTICES.md
+  # Needs Docker, which the self-hosted runner doesn't have. Set the repository variable
+  # HOSTED_RUNNERS=true once GitHub-hosted minutes are available again to turn it back on.
+  docker:
+    if: vars.HOSTED_RUNNERS == 'true'
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t flower-pollen:ci .
+      - name: Container starts and is healthy
+        run: |
+          docker run -d --name fp -p 8080:8080 flower-pollen:ci
+          for i in $(seq 1 30); do curl -fs localhost:8080/health && exit 0; sleep 1; done
+          docker logs fp; exit 1

@@ -1,0 +1,9 @@
+node_modules
+data
+test
+scripts
+deploy
+.git
+*.db*
+*.pem
+.env
