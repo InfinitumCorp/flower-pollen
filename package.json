@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "node --watch src/server.ts",
     "start": "node src/server.ts",
-    "test": "node --test test/",
+    "test": "node --test \"test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
     "notices": "node scripts/notices.mjs"
   },
