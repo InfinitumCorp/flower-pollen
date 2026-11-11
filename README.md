@@ -47,6 +47,7 @@ Callers authenticate with an `x-api-key` header. Stations may instead present a 
 | `operator` | register aircraft, plan/submit/launch/recall/abort missions, RTB or mark aircraft lost, ack alerts |
 | `station` | **bound to one Flower™**: heartbeat, docked status, dock, telemetry, cell coverage, firmware install, data offload |
 | `auditor` | read-only, including ledger and its verification |
+| `agent` | for AI agents such as OpenClaw: reads fleet state (not the ledger or certs); can only make things safer: return an aircraft, recall a mission, abort a mission in flight, acknowledge alerts |
 
 ## Mission lifecycle
 
@@ -127,6 +128,20 @@ A rejected or rolled-back request never appears.
 
 `GET /v1/keys` lists keys without hashes. `POST /v1/keys/:id/rotate` (commander) or `POST /v1/me/rotate` (any key, for itself)
 issues a replacement with the same name, role and station binding. The old key stops working at once.
+
+## OpenClaw
+
+The `flower-pollen` [OpenClaw](https://github.com/openclaw/openclaw) skill in `integrations/openclaw/flower-pollen`
+lets an OpenClaw assistant report on the fleet and take safety actions. It uses the bundled `fp.mjs` client
+(no dependencies) and an API key with the `agent` role, so the limits are enforced by this server, not by the prompt.
+
+1. `npm run openclaw:install` copies the skill into `~/.openclaw/skills/flower-pollen` (or `$OPENCLAW_HOME/skills`).
+2. As a commander, create a key: `POST /v1/keys {"name":"openclaw","role":"agent"}`.
+3. Give OpenClaw that key as `FP_API_KEY` in its environment, plus `FP_URL` if the backend is not on
+   `http://127.0.0.1:8080`. Never paste the key into chat.
+
+The skill tells the agent to ask a person before every safety action (`--yes`) and to ignore instructions found in
+fleet data. An agent key cannot create, approve or launch missions, mark aircraft lost, or manage keys, certs or firmware.
 
 ## Other endpoints
 

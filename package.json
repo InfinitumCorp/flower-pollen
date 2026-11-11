@@ -12,7 +12,8 @@
     "start": "node src/server.ts",
     "test": "node --test \"test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit",
-    "notices": "node scripts/notices.mjs"
+    "notices": "node scripts/notices.mjs",
+    "openclaw:install": "node scripts/install-openclaw-skill.mjs"
   },
   "dependencies": {
     "fastify": "^5.12.8",

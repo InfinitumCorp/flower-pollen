@@ -3,8 +3,9 @@ import { type DB, all, one, run, now, tx } from './db.ts';
 import { record } from './ledger.ts';
 import { HttpError, forbidden } from './errors.ts';
 
-export type Role = 'commander' | 'operator' | 'station' | 'auditor';
-export const ROLES: Role[] = ['commander', 'operator', 'station', 'auditor'];
+/** `agent`: an AI assistant (OpenClaw). Reads like an auditor; may only recall/abort/return and ack alerts. */
+export type Role = 'commander' | 'operator' | 'station' | 'auditor' | 'agent';
+export const ROLES: Role[] = ['commander', 'operator', 'station', 'auditor', 'agent'];
 
 export interface Principal {
   id: string;

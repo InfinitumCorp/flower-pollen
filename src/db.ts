@@ -4,16 +4,18 @@ import { discard, flush } from './events.ts';
 export type DB = DatabaseSync;
 export type Row = Record<string, any>;
 
-const SCHEMA = `
+const API_KEYS_DDL = `
 CREATE TABLE IF NOT EXISTS api_keys (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
   key_hash    TEXT NOT NULL UNIQUE,
-  role        TEXT NOT NULL CHECK (role IN ('commander','operator','station','auditor')),
+  role        TEXT NOT NULL CHECK (role IN ('commander','operator','station','auditor','agent')),
   station_id  TEXT REFERENCES stations(id),
   revoked_at  TEXT,
   created_at  TEXT NOT NULL
-);
+);`;
+
+const SCHEMA = `${API_KEYS_DDL}
 
 -- Flower(TM) base stations
 CREATE TABLE IF NOT EXISTS stations (
@@ -176,7 +178,31 @@ export function openDb(path = ':memory:'): DB {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+/** Brings databases created by older versions up to the current schema. */
+function migrate(db: DB) {
+  // v2: api_keys.role allows 'agent' (OpenClaw). SQLite can't alter a CHECK, so rebuild the table.
+  const sql = (db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'api_keys'`).get() as { sql: string }).sql;
+  if (sql.includes("'agent'")) return;
+  db.exec('PRAGMA foreign_keys = OFF');
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.exec(`ALTER TABLE api_keys RENAME TO api_keys_v1;
+        ${API_KEYS_DDL}
+        INSERT INTO api_keys SELECT * FROM api_keys_v1;
+        DROP TABLE api_keys_v1;`);
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
 }
 
 /** Run fn inside a transaction; nested calls join the outer transaction. */
