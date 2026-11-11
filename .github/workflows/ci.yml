@@ -6,10 +6,9 @@ on:
 permissions:
   contents: read
 jobs:
-  # Runs on the self-hosted Windows runner registered with the `flower-pollen` label
-  # (GitHub-hosted minutes are unavailable on this account for now).
+  # Runs on the box self-hosted runner when CI_RUNNER=infinitum-ci.
   test:
-    runs-on: [self-hosted, flower-pollen]
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     defaults:
       run:
         shell: bash
@@ -28,11 +27,9 @@ jobs:
       - run: npm test
       - name: Third-party notices are up to date
         run: npm run notices && git diff --exit-code THIRD_PARTY_NOTICES.md
-  # Needs Docker, which the self-hosted runner doesn't have. Set the repository variable
-  # HOSTED_RUNNERS=true once GitHub-hosted minutes are available again to turn it back on.
+  # Docker is available on the box infinitum-ci runner.
   docker:
-    if: vars.HOSTED_RUNNERS == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     needs: test
     steps:
       - uses: actions/checkout@v4
