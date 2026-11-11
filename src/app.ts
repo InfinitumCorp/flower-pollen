@@ -128,7 +128,8 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
   });
 
   const who = (req: FastifyRequest, ...roles: Parameters<typeof requireRole>[1][]) => requireRole(req.principal, ...roles);
-  const ALL_HUMANS = ['commander', 'operator', 'auditor'] as const;
+  // Read access for people and for the OpenClaw agent role (which can read everything a person can, minus keys, certs and ledger).
+  const READERS = ['commander', 'operator', 'auditor', 'agent'] as const;
 
   // ---- Health ----
   // Cheap liveness only: a full chain check is O(ledger) and lives at /v1/ledger/verify (authenticated).
@@ -224,7 +225,7 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
   });
 
   // ---- Flower(TM) stations ----
-  app.get('/v1/stations', async (req) => { who(req, ...ALL_HUMANS); return fleet.listStations(db); });
+  app.get('/v1/stations', async (req) => { who(req, ...READERS); return fleet.listStations(db); });
   app.post('/v1/stations', async (req, reply) => {
     const p = who(req, 'commander');
     reply.status(201);
@@ -271,7 +272,7 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
 
   // ---- POLLEN(TM) aircraft ----
   app.get('/v1/aircraft', async (req) => {
-    who(req, ...ALL_HUMANS);
+    who(req, ...READERS);
     const q = z.object({ stationId: uuid.optional(), missionId: uuid.optional(), state: z.string().optional() }).parse(req.query);
     return fleet.listAircraft(db, q);
   });
@@ -289,7 +290,7 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
     return a;
   });
   app.get('/v1/aircraft/:id/track', async (req) => {
-    who(req, ...ALL_HUMANS);
+    who(req, ...READERS);
     const q = z.object({ missionId: uuid.optional(), limit: z.coerce.number().int().min(1).max(10_000).default(1000) }).parse(req.query);
     return fleet.track(db, IdParam.parse(req.params).id, q.missionId, q.limit);
   });
@@ -307,8 +308,9 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
     if (p.role === 'station') requireStationScope(p, fleet.getAircraftRow(db, id).station_id);
     return fleet.transitionAircraft(db, actorOf(p), id, b.action === 'enter' ? 'maintenance' : 'docked', b.reason);
   });
+  // The OpenClaw agent may only take actions that bring aircraft home or acknowledge alerts.
   app.post('/v1/aircraft/:id/return', async (req) => {
-    const p = who(req, 'commander', 'operator');
+    const p = who(req, 'commander', 'operator', 'agent');
     return missions.returnAircraft(db, p, IdParam.parse(req.params).id, Reason.parse(req.body).reason);
   });
   app.post('/v1/aircraft/:id/lost', async (req, reply) => {
@@ -343,7 +345,7 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
 
   // ---- Missions ----
   app.get('/v1/missions', async (req) => {
-    who(req, ...ALL_HUMANS);
+    who(req, ...READERS);
     return missions.listMissions(db, z.object({ status: z.string().optional() }).parse(req.query).status);
   });
   app.post('/v1/missions', async (req, reply) => {
@@ -351,8 +353,8 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
     reply.status(201);
     return missions.createMission(db, p, MissionBody.parse(req.body));
   });
-  app.get('/v1/missions/:id', async (req) => { who(req, ...ALL_HUMANS); return missions.getMission(db, IdParam.parse(req.params).id); });
-  app.get('/v1/missions/:id/cells', async (req) => { who(req, ...ALL_HUMANS); return missions.listCells(db, IdParam.parse(req.params).id); });
+  app.get('/v1/missions/:id', async (req) => { who(req, ...READERS); return missions.getMission(db, IdParam.parse(req.params).id); });
+  app.get('/v1/missions/:id/cells', async (req) => { who(req, ...READERS); return missions.listCells(db, IdParam.parse(req.params).id); });
   app.post('/v1/missions/:id/submit', async (req) =>
     missions.submitMission(db, who(req, 'commander', 'operator'), IdParam.parse(req.params).id));
   app.post('/v1/missions/:id/approve', async (req) =>
@@ -362,12 +364,19 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
   app.post('/v1/missions/:id/launch', async (req) =>
     missions.launchMission(db, who(req, 'commander', 'operator'), IdParam.parse(req.params).id));
   app.post('/v1/missions/:id/recall', async (req) => {
-    const p = who(req, 'commander', 'operator');
+    const p = who(req, 'commander', 'operator', 'agent');
     const { reason } = z.object({ reason: Reason.shape.reason.default('operator recall') }).parse(req.body ?? {});
     return missions.recallMission(db, actorOf(p), IdParam.parse(req.params).id, reason);
   });
-  app.post('/v1/missions/:id/abort', async (req) =>
-    missions.abortMission(db, who(req, 'commander', 'operator'), IdParam.parse(req.params).id, Reason.parse(req.body).reason));
+  app.post('/v1/missions/:id/abort', async (req) => {
+    const p = who(req, 'commander', 'operator', 'agent');
+    const { id } = IdParam.parse(req.params);
+    // The agent can stop a mission in flight, but not cancel planning work that people own.
+    if (p.role === 'agent' && !['active', 'recalling'].includes(missions.getMission(db, id).status)) {
+      throw new HttpError(403, 'forbidden', 'agent keys can only abort missions that are in flight');
+    }
+    return missions.abortMission(db, p, id, Reason.parse(req.body).reason);
+  });
   app.post('/v1/missions/:id/cells/:cellId/covered', async (req) => {
     const p = who(req, 'station');
     const { id, cellId } = params({ id: uuid, cellId: z.coerce.number().int().min(0) }).parse(req.params);
@@ -377,11 +386,11 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
 
   // ---- Alerts ----
   app.get('/v1/alerts', async (req) => {
-    who(req, ...ALL_HUMANS);
+    who(req, ...READERS);
     return fleet.listAlerts(db, z.object({ open: z.enum(['true', 'false']).default('true') }).parse(req.query).open === 'true');
   });
   app.post('/v1/alerts/:id/ack', async (req, reply) => {
-    const p = who(req, 'commander', 'operator');
+    const p = who(req, 'commander', 'operator', 'agent');
     fleet.acknowledgeAlert(db, actorOf(p), params({ id: z.coerce.number().int() }).parse(req.params).id);
     return reply.status(204).send();
   });
@@ -403,7 +412,7 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
     return fleet.recordCapture(db, actorOf(p), b);
   });
   app.get('/v1/captures', async (req) => {
-    who(req, ...ALL_HUMANS);
+    who(req, ...READERS);
     return fleet.listCaptures(db, z.object({ missionId: uuid.optional() }).parse(req.query).missionId);
   });
 
