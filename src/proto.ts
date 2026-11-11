@@ -21,6 +21,11 @@ export function decodeTelemetryBatch(buf: Buffer): DecodedBatch {
   } catch (e) {
     throw badRequest(`invalid TelemetryBatch: ${(e as Error).message}`);
   }
+  for (const p of obj.points) {
+    if (p.tsUnixMs > 0 && !Number.isFinite(new Date(p.tsUnixMs).getTime())) {
+      throw badRequest(`invalid TelemetryBatch: ts_unix_ms ${p.tsUnixMs} is out of range`);
+    }
+  }
   return {
     stationId: obj.stationId,
     sequence: obj.sequence,

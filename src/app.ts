@@ -131,7 +131,11 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
   const ALL_HUMANS = ['commander', 'operator', 'auditor'] as const;
 
   // ---- Health ----
-  app.get('/health', async () => ({ ok: true, service: 'flower-pollen', ledger: ledger.verify(db).ok }));
+  // Cheap liveness only: a full chain check is O(ledger) and lives at /v1/ledger/verify (authenticated).
+  app.get('/health', async () => {
+    one(db, 'SELECT 1');
+    return { ok: true, service: 'flower-pollen' };
+  });
 
   // ---- API keys ----
   app.post('/v1/keys', async (req, reply) => {
@@ -195,6 +199,12 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
           if (visible(e)) send(e);
         }
       }
+      // More missed events than one replay allows: tell the client where we stopped (the `id:` moves
+      // its Last-Event-ID past events it could not see) and close, so it reconnects for the next batch.
+      if (ledger.list(db, cursor, 1).length) {
+        res.end(`id: ${cursor}\nevent: replay_truncated\ndata: ${JSON.stringify({ resumeAfter: cursor })}\n\n`);
+        return;
+      }
     }
     const unsubscribe = subscribe((e) => {
       if (e.seq <= cursor) return;
@@ -245,8 +255,7 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
     const { id } = IdParam.parse(req.params);
     requireStationScope(p, id);
     fleet.getStationRow(db, id);
-    const active = missions.listMissions(db).filter((m) => m.stationId === id && ['active', 'recalling', 'aborted'].includes(m.status));
-    const out = active.map((m) => {
+    const out = missions.listOpenMissionsForStation(db, id).map((m) => {
       const cells = missions.listCells(db, m.id).filter((c) => c.status === 'assigned');
       const aircraft = fleet.listAircraft(db, { missionId: m.id }).map((a) => ({
         id: a.id, serial: a.serial, state: a.state,
@@ -273,7 +282,12 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
     reply.status(201);
     return fleet.registerAircraft(db, actorOf(p), b);
   });
-  app.get('/v1/aircraft/:id', async (req) => { who(req, ...ROLES); return fleet.getAircraft(db, IdParam.parse(req.params).id); });
+  app.get('/v1/aircraft/:id', async (req) => {
+    const p = who(req, ...ROLES);
+    const a = fleet.getAircraft(db, IdParam.parse(req.params).id);
+    requireStationScope(p, a.stationId);
+    return a;
+  });
   app.get('/v1/aircraft/:id/track', async (req) => {
     who(req, ...ALL_HUMANS);
     const q = z.object({ missionId: uuid.optional(), limit: z.coerce.number().int().min(1).max(10_000).default(1000) }).parse(req.query);
@@ -349,7 +363,8 @@ export function buildApp(db: DB, opts: AppOptions = {}): FastifyInstance {
     missions.launchMission(db, who(req, 'commander', 'operator'), IdParam.parse(req.params).id));
   app.post('/v1/missions/:id/recall', async (req) => {
     const p = who(req, 'commander', 'operator');
-    return missions.recallMission(db, actorOf(p), IdParam.parse(req.params).id, Reason.parse(req.body ?? { reason: 'operator recall' }).reason);
+    const { reason } = z.object({ reason: Reason.shape.reason.default('operator recall') }).parse(req.body ?? {});
+    return missions.recallMission(db, actorOf(p), IdParam.parse(req.params).id, reason);
   });
   app.post('/v1/missions/:id/abort', async (req) =>
     missions.abortMission(db, who(req, 'commander', 'operator'), IdParam.parse(req.params).id, Reason.parse(req.body).reason));

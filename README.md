@@ -116,7 +116,9 @@ See [deploy/pki/README.md](deploy/pki/README.md) for cfssl configs. `scripts/dev
 `GET /v1/events` is a Server-Sent Events stream of every ledger entry, sent only after the change is saved.
 A rejected or rolled-back request never appears.
 
-* Each event's `id` is its ledger sequence number. Reconnect with a `Last-Event-ID` header to receive what was missed (up to 10,000 events).
+* Each event's `id` is its ledger sequence number. Reconnect with a `Last-Event-ID` header to receive what was missed.
+  One reconnect replays at most 10,000 events; if more were missed, the server sends a `replay_truncated` event
+  (whose `id` is where it stopped) and closes the stream, so the client reconnects and receives the next batch.
 * `?types=mission.,alert.` filters by event-type prefix.
 * Station keys only see events for their own Flower™ and never see key-management events.
 * The caller's key or certificate is re-checked at every keep-alive (15 s). If it has been revoked or rotated, the stream is closed.
